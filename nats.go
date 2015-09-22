@@ -994,7 +994,6 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 
 		// Capture under locks
 		s.mu.Lock()
-		conn := s.conn
 		mcb := s.mcb
 		max := s.max
 		s.mu.Unlock()
