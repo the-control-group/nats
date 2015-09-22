@@ -999,7 +999,7 @@ func (nc *Conn) deliverMsgs(ch chan *Msg) {
 		max := s.max
 		s.mu.Unlock()
 
-		if conn == nil || mcb == nil {
+		if mcb == nil {
 			continue
 		}
 
