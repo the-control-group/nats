@@ -980,11 +980,7 @@ func (nc *Conn) readLoop() {
 func (nc *Conn) deliverMsgs(ch chan *Msg) {
 	for {
 		nc.mu.Lock()
-		closed := nc.isClosed()
 		nc.mu.Unlock()
-		if closed {
-			break
-		}
 
 		m, ok := <-ch
 		if !ok {
