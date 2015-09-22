@@ -1424,7 +1424,6 @@ func (nc *Conn) removeSub(s *Subscription) {
 	if s.mch != nil {
 		// Kick out deliverMsgs Goroutine
 		close(s.mch)
-		s.mch = nil
 	}
 	// Mark as invalid
 	s.conn = nil
@@ -1477,10 +1476,6 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 		s.mu.Unlock()
 		return nil, errors.New("nats: Illegal call on an async Subscription")
 	}
-	if s.conn == nil {
-		s.mu.Unlock()
-		return nil, ErrBadSubscription
-	}
 	if s.sc {
 		s.sc = false
 		s.mu.Unlock()
@@ -1526,9 +1521,6 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 func (s *Subscription) QueuedMsgs() (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.conn == nil {
-		return -1, ErrBadSubscription
-	}
 	return len(s.mch), nil
 }
 
