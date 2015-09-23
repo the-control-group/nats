@@ -1400,6 +1400,8 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		return nil
 	}
 
+	maxStr := _EMPTY_
+
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	// FIXME (njc) Does it make sense to unsubscribe before removing sub?
@@ -1407,8 +1409,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
 		nc.Flush()
 	}
-
-	maxStr := _EMPTY_
 	if max > 0 {
 		s.max = uint64(max)
 		maxStr = strconv.Itoa(max)
