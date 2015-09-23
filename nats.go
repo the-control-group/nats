@@ -44,20 +44,24 @@ const (
 const STALE_CONNECTION = "Stale Connection"
 
 var (
-	ErrConnectionClosed   = errors.New("nats: Connection Closed")
-	ErrSecureConnRequired = errors.New("nats: Secure connection required")
-	ErrSecureConnWanted   = errors.New("nats: Secure connection not available")
-	ErrBadSubscription    = errors.New("nats: Invalid Subscription")
-	ErrBadSubject         = errors.New("nats: Invalid Subject")
-	ErrSlowConsumer       = errors.New("nats: Slow Consumer, messages dropped")
-	ErrTimeout            = errors.New("nats: Timeout")
-	ErrBadTimeout         = errors.New("nats: Timeout Invalid")
-	ErrAuthorization      = errors.New("nats: Authorization Failed")
-	ErrNoServers          = errors.New("nats: No servers available for connection")
-	ErrJsonParse          = errors.New("nats: Connect message, json parse err")
-	ErrChanArg            = errors.New("nats: Argument needs to be a channel type")
-	ErrStaleConnection    = errors.New("nats: " + STALE_CONNECTION)
-	ErrMaxPayload         = errors.New("nats: Maximum Payload Exceeded")
+	ErrConnectionClosed     = errors.New("nats: Connection Closed")
+	ErrSecureConnRequired   = errors.New("nats: Secure connection required")
+	ErrSecureConnWanted     = errors.New("nats: Secure connection not available")
+	ErrInactiveSubscription = errors.New("nats: Inactive Subscription")
+	ErrInvalidSubscription  = errors.New("nats: Invalid Subscription")
+	ErrBadSubject           = errors.New("nats: Invalid Subject")
+	ErrSlowConsumer         = errors.New("nats: Slow Consumer, messages dropped")
+	ErrTimeout              = errors.New("nats: Timeout")
+	ErrBadTimeout           = errors.New("nats: Timeout Invalid")
+	ErrAuthorization        = errors.New("nats: Authorization Failed")
+	ErrNoServers            = errors.New("nats: No servers available for connection")
+	ErrJsonParse            = errors.New("nats: Connect message, json parse err")
+	ErrChanArg              = errors.New("nats: Argument needs to be a channel type")
+	ErrStaleConnection      = errors.New("nats: " + STALE_CONNECTION)
+	ErrMaxPayload           = errors.New("nats: Maximum Payload Exceeded")
+	ErrMaxDelivered         = errors.New("nats: Max messages delivered")
+	ErrAsyncCall            = errors.New("nats: Illegal call on an async Subscription")
+	ErrNoMessages           = errors.New("nats: No more messages")
 )
 
 var DefaultOptions = Options{
@@ -176,10 +180,11 @@ type Subscription struct {
 	delivered uint64
 	bytes     uint64
 	max       uint64
-	conn      *Conn
+	active    bool
 	mcb       MsgHandler
 	mch       chan *Msg
 	sc        bool
+	conn      *Conn
 }
 
 // Msg is a structure used by Subscribers and PublishMsg().
@@ -977,6 +982,8 @@ func (nc *Conn) readLoop() {
 
 // deliverMsgs waits on the delivery channel shared with readLoop and processMsg.
 // It is used to deliver messages to asynchronous subscribers.
+// Returns when the subscriber's channel is closed and empty or
+// if the max delivered messages has been reached
 func (nc *Conn) deliverMsgs(ch chan *Msg) {
 	for {
 		nc.mu.Lock()
@@ -1328,7 +1335,7 @@ func (nc *Conn) subscribe(subj, queue string, cb MsgHandler, chanlen int) (*Subs
 		return nil, ErrConnectionClosed
 	}
 
-	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc}
+	sub := &Subscription{Subject: subj, Queue: queue, mcb: cb, conn: nc, active: true}
 	sub.mch = make(chan *Msg, chanlen)
 
 	// If we have an async callback, start up a sub specific
@@ -1386,10 +1393,6 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	defer nc.kickFlusher()
 	defer nc.mu.Unlock()
 
-	if nc.isClosed() {
-		return ErrConnectionClosed
-	}
-
 	s := nc.subs[sub.sid]
 	// Already unsubscribed
 	if s == nil {
@@ -1403,11 +1406,17 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 	} else {
 		nc.removeSub(s)
 	}
+
+	if nc.isClosed() {
+		return nil
+	}
+
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	if !nc.isReconnecting() {
 		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
 	}
+
 	return nil
 }
 
@@ -1417,31 +1426,37 @@ func (nc *Conn) removeSub(s *Subscription) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mch != nil {
-		// Kick out deliverMsgs Goroutine
 		close(s.mch)
 	}
 	// Mark as invalid
-	s.conn = nil
+	s.active = false
+}
+
+// IsActive returns a boolean indicating whether the subscription
+// is still active. This will return false if the subscription has
+// already been closed.
+func (s *Subscription) IsActive() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.active
 }
 
 // IsValid returns a boolean indicating whether the subscription
-// is still active. This will return false if the subscription has
-// already been closed.
+// is can still be consumed either via NextMsg() or async callback
 func (s *Subscription) IsValid() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.conn != nil
+	return s.mch != nil
 }
 
 // Unsubscribe will remove interest in the given subject.
 func (s *Subscription) Unsubscribe() error {
 	s.mu.Lock()
-	conn := s.conn
 	s.mu.Unlock()
-	if conn == nil {
-		return ErrBadSubscription
+	if !s.active {
+		return ErrInactiveSubscription
 	}
-	return conn.unsubscribe(s, 0)
+	return s.conn.unsubscribe(s, 0)
 }
 
 // AutoUnsubscribe will issue an automatic Unsubscribe that is
@@ -1450,12 +1465,11 @@ func (s *Subscription) Unsubscribe() error {
 // of subscribers. Request() uses this functionality.
 func (s *Subscription) AutoUnsubscribe(max int) error {
 	s.mu.Lock()
-	conn := s.conn
 	s.mu.Unlock()
-	if conn == nil {
-		return ErrBadSubscription
+	if !s.active {
+		return ErrInactiveSubscription
 	}
-	return conn.unsubscribe(s, max)
+	return s.conn.unsubscribe(s, max)
 }
 
 // NextMsg() will return the next message available to a synchronous subscriber
@@ -1465,11 +1479,11 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	s.mu.Lock()
 	if s.mch == nil {
 		s.mu.Unlock()
-		return nil, ErrConnectionClosed
+		return nil, ErrInvalidSubscription
 	}
 	if s.mcb != nil {
 		s.mu.Unlock()
-		return nil, errors.New("nats: Illegal call on an async Subscription")
+		return nil, ErrAsyncCall
 	}
 	if s.sc {
 		s.sc = false
@@ -1490,12 +1504,12 @@ func (s *Subscription) NextMsg(timeout time.Duration) (msg *Msg, err error) {
 	select {
 	case msg, ok = <-mch:
 		if !ok {
-			return nil, ErrConnectionClosed
+			return nil, ErrNoMessages
 		}
 		delivered := atomic.AddUint64(&s.delivered, 1)
 		if max > 0 {
 			if delivered > max {
-				return nil, errors.New("nats: Max messages delivered")
+				return nil, ErrMaxDelivered
 			}
 			// Remove subscription if we have reached max.
 			if delivered == max {
@@ -1680,16 +1694,12 @@ func (nc *Conn) close(status Status, doCBs bool) {
 		nc.ptmr.Stop()
 	}
 
-	// Close sync subscriber channels and release any
-	// pending NextMsg() calls.
+	// Close sync subscriber channels]
 	for _, s := range nc.subs {
 		s.mu.Lock()
 		if s.mch != nil {
 			close(s.mch)
-			s.mch = nil
 		}
-		// Mark as invalid, for signalling to deliverMsgs
-		s.mcb = nil
 		s.mu.Unlock()
 	}
 	nc.subs = nil
