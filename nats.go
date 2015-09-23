@@ -1032,6 +1032,7 @@ func (nc *Conn) processMsg(msg []byte) {
 	nc.InBytes += uint64(len(msg))
 
 	sub := nc.subs[nc.ps.ma.sid]
+
 	if sub == nil {
 		nc.mu.Unlock()
 		return
@@ -1399,22 +1400,20 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
 		return nil
 	}
 
+	// We will send these for all subs when we reconnect
+	// so that we can suppress here.
+	// FIXME (njc) Does it make sense to unsubscribe before removing sub?
+	if !nc.isClosed() && !nc.isReconnecting() {
+		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
+		nc.Flush()
+	}
+
 	maxStr := _EMPTY_
 	if max > 0 {
 		s.max = uint64(max)
 		maxStr = strconv.Itoa(max)
 	} else {
 		nc.removeSub(s)
-	}
-
-	if nc.isClosed() {
-		return nil
-	}
-
-	// We will send these for all subs when we reconnect
-	// so that we can suppress here.
-	if !nc.isReconnecting() {
-		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
 	}
 
 	return nil
