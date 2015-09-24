@@ -1388,35 +1388,42 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
-func (nc *Conn) unsubscribe(sub *Subscription, max int) error {
-	nc.mu.Lock()
-	// ok here, but defer is expensive
+func (nc *Conn) unsubscribe(sub *Subscription, max int) (err error) {
 	defer nc.kickFlusher()
-	defer nc.mu.Unlock()
 
+	nc.mu.Lock()
 	s := nc.subs[sub.sid]
+	nc.mu.Unlock()
+
 	// Already unsubscribed
 	if s == nil {
-		return nil
+		return
 	}
 
 	maxStr := _EMPTY_
+
+	if max > 0 {
+		s.max = uint64(max)
+		maxStr = strconv.Itoa(max)
+	}
 
 	// We will send these for all subs when we reconnect
 	// so that we can suppress here.
 	// FIXME (njc) Does it make sense to unsubscribe before removing sub?
 	if !nc.isClosed() && !nc.isReconnecting() {
+		nc.mu.Lock()
 		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
-		nc.Flush()
-	}
-	if max > 0 {
-		s.max = uint64(max)
-		maxStr = strconv.Itoa(max)
-	} else {
-		nc.removeSub(s)
+		nc.mu.Unlock()
+		err = nc.Flush()
 	}
 
-	return nil
+	if max <= 0 {
+		nc.mu.Lock()
+		nc.removeSub(s)
+		nc.mu.Unlock()
+	}
+
+	return
 }
 
 // Lock for nc should be held here upon entry
