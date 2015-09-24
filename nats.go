@@ -1035,6 +1035,8 @@ func (nc *Conn) processMsg(msg []byte) {
 
 	if sub == nil {
 		nc.mu.Unlock()
+		// FIXME (njc) REMOVE PANIC
+		panic("THREW AWAY MESSAGE")
 		return
 	}
 
@@ -1389,11 +1391,11 @@ func (nc *Conn) QueueSubscribeSync(subj, queue string) (*Subscription, error) {
 // unsubscribe performs the low level unsubscribe to the server.
 // Use Subscription.Unsubscribe()
 func (nc *Conn) unsubscribe(sub *Subscription, max int) (err error) {
-	defer nc.kickFlusher()
-
 	nc.mu.Lock()
+	defer nc.kickFlusher()
+	defer nc.mu.Unlock()
+
 	s := nc.subs[sub.sid]
-	nc.mu.Unlock()
 
 	// Already unsubscribed
 	if s == nil {
@@ -1411,16 +1413,14 @@ func (nc *Conn) unsubscribe(sub *Subscription, max int) (err error) {
 	// so that we can suppress here.
 	// FIXME (njc) Does it make sense to unsubscribe before removing sub?
 	if !nc.isClosed() && !nc.isReconnecting() {
-		nc.mu.Lock()
 		nc.bw.WriteString(fmt.Sprintf(unsubProto, s.sid, maxStr))
 		nc.mu.Unlock()
 		err = nc.Flush()
+		nc.mu.Lock()
 	}
 
 	if max <= 0 {
-		nc.mu.Lock()
 		nc.removeSub(s)
-		nc.mu.Unlock()
 	}
 
 	return
