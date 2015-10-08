@@ -1465,6 +1465,13 @@ func (s *Subscription) Unsubscribe() error {
 	return s.conn.unsubscribe(s, 0)
 }
 
+// IsSlowSubscriber checks if the subscriber is a slow subscriber
+func (s *Subscription) IsSlowSubscriber() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sc
+}
+
 // AutoUnsubscribe will issue an automatic Unsubscribe that is
 // processed by the server when max messages have been received.
 // This can be useful when sending a request to an unknown number
