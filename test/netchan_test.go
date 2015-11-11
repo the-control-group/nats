@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats"
+	"github.com/the-control-group/nats"
 )
 
 func TestBadChan(t *testing.T) {

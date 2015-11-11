@@ -6,7 +6,7 @@ import (
 
 	"github.com/nats-io/gnatsd/auth"
 	gnatsd "github.com/nats-io/gnatsd/test"
-	"github.com/nats-io/nats"
+	"github.com/the-control-group/nats"
 )
 
 func TestAuth(t *testing.T) {

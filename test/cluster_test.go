@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/nats-io/gnatsd/auth"
-	"github.com/nats-io/nats"
+	"github.com/the-control-group/nats"
 )
 
 var testServers = []string{
